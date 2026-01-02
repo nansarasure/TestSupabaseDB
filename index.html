@@ -1,0 +1,486 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>School Lost &amp; Found (Supabase)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; margin: 2rem; }
+    h2 { margin-top: 2rem; }
+    form, .card { border: 1px solid #ddd; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; }
+    input, button, select, textarea { padding: 0.5rem; margin: 0.25rem 0; }
+    .row { display: flex; gap: 1rem; flex-wrap: wrap; }
+    .muted { color: #666; }
+    .hidden { display: none; }
+    .list { border: 1px solid #eee; padding: 1rem; border-radius: 8px; }
+    .item-row { border-bottom: 1px dashed #eee; padding: 0.5rem 0; display: grid; grid-template-columns: 1fr auto auto; gap: 0.5rem; align-items: center; }
+    .claim-row { border-bottom: 1px dashed #eee; padding: 0.5rem 0; display: grid; grid-template-columns: 1fr auto auto; gap: 0.5rem; align-items: center; }
+    .pill { display:inline-block; padding:0.25rem 0.5rem; border:1px solid #ccc; border-radius:999px; font-size: 0.85rem; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  </style>
+</head>
+<body>
+  <h1>School Lost &amp; Found</h1>
+  <p class="muted">Replace <strong>SUPABASE_URL</strong> and <strong>SUPABASE_ANON_KEY</strong> in the script below.</p>
+
+  <!-- Auth -->
+  <div class="row">
+    <form id="signupForm">
+      <h2>Sign Up</h2>
+      <input type="email" id="signupEmail" placeholder="email@example.com" required />
+      <input type="password" id="signupPassword" placeholder="password" required />
+      <input type="text" id="signupName" placeholder="Full name (optional)" />
+      <button type="submit">Create account</button>
+      <div id="signupMsg" class="muted"></div>
+    </form>
+
+    <form id="signinForm">
+      <h2>Sign In</h2>
+      <input type="email" id="signinEmail" placeholder="email@example.com" required />
+      <input type="password" id="signinPassword" placeholder="password" required />
+      <button type="submit">Sign in</button>
+      <div id="signinMsg" class="muted"></div>
+    </form>
+
+    <div class="card">
+      <h2>Session</h2>
+      <div id="userInfo" class="muted">Not signed in</div>
+      <button id="signoutBtn" class="hidden">Sign out</button>
+    </div>
+  </div>
+
+  <!-- Student: submit found item -->
+  <form id="submitItemForm" class="hidden">
+    <h2>Found something? Submit it</h2>
+    <input type="text" id="itemTitle" placeholder="Item title (e.g., 'Blue water bottle')" required />
+    <textarea id="itemDesc" placeholder="Description"></textarea>
+    <input type="text" id="itemPlaceFound" placeholder="Place found (e.g., 'Gym')" />
+    <input type="url" id="itemPhotoUrl" placeholder="Photo URL (optional)" />
+    <button type="submit">Submit</button>
+    <div id="submitMsg" class="muted"></div>
+  </form>
+
+  <!-- Student: search + claim approved items -->
+  <div id="studentArea" class="hidden">
+    <h2>Browse &amp; Claim Approved Items</h2>
+    <div class="grid-2">
+      <div>
+        <input type="text" id="searchText" placeholder="Search by title/place..." />
+        <button id="searchBtn">Search</button>
+      </div>
+      <div class="muted">Only items with status <span class="pill">approved</span> are listed.</div>
+    </div>
+
+    <div id="itemsList" class="list"></div>
+    <div id="itemsMsg" class="muted"></div>
+
+    <h3>Your Claims</h3>
+    <div id="claimsList" class="list"></div>
+    <div id="claimsMsg" class="muted"></div>
+  </div>
+
+  <!-- Admin Area -->
+  <div id="adminArea" class="hidden">
+    <h2>Admin Panel</h2>
+
+    <h3>Submissions awaiting approval</h3>
+    <div id="pendingItemsList" class="list"></div>
+    <div id="pendingItemsMsg" class="muted"></div>
+
+    <h3>Claims awaiting decision</h3>
+    <div id="pendingClaimsList" class="list"></div>
+    <div id="pendingClaimsMsg" class="muted"></div>
+  </div>
+
+  <!-- Supabase JS v2 via ESM CDN -->
+  <script type="module">
+    import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+    // CDN ESM usage is documented by Supabase (UMD/ESM options available). [8](https://www.npmjs.com/package/@supabase/supabase-js?activeTab=readme)
+
+    const SUPABASE_URL = 'https://zmosprfucfmpkuphihvo.supabase.co'; // ← replace
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inptb3NwcmZ1Y2ZtcGt1cGhpaHZvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY5MjU5OTYsImV4cCI6MjA4MjUwMTk5Nn0.5PNpZwDbrKgITIFwceqYTbDMtDwd7ZgcBZ2QQx5QJtA';            // ← replace
+
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY); // SDK init. [1](https://supabase.com/docs/reference/javascript/start)
+
+    /* DOM refs */
+    const signupForm = document.getElementById('signupForm');
+    const signinForm = document.getElementById('signinForm');
+    const signoutBtn = document.getElementById('signoutBtn');
+    const userInfo = document.getElementById('userInfo');
+    const signupMsg = document.getElementById('signupMsg');
+    const signinMsg = document.getElementById('signinMsg');
+
+    const submitItemForm = document.getElementById('submitItemForm');
+    const itemTitle = document.getElementById('itemTitle');
+    const itemDesc = document.getElementById('itemDesc');
+    const itemPlaceFound = document.getElementById('itemPlaceFound');
+    const itemPhotoUrl = document.getElementById('itemPhotoUrl');
+    const submitMsg = document.getElementById('submitMsg');
+
+    const studentArea = document.getElementById('studentArea');
+    const searchText = document.getElementById('searchText');
+    const searchBtn = document.getElementById('searchBtn');
+    const itemsList = document.getElementById('itemsList');
+    const itemsMsg = document.getElementById('itemsMsg');
+
+    const claimsList = document.getElementById('claimsList');
+    const claimsMsg = document.getElementById('claimsMsg');
+
+    const adminArea = document.getElementById('adminArea');
+    const pendingItemsList = document.getElementById('pendingItemsList');
+    const pendingItemsMsg = document.getElementById('pendingItemsMsg');
+    const pendingClaimsList = document.getElementById('pendingClaimsList');
+    const pendingClaimsMsg = document.getElementById('pendingClaimsMsg');
+
+    /* ===== Auth UI ===== */
+    signupForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      signupMsg.textContent = 'Creating account...';
+      const email = document.getElementById('signupEmail').value.trim();
+      const password = document.getElementById('signupPassword').value.trim();
+      const full_name = document.getElementById('signupName').value.trim();
+
+      const { data, error } = await supabase.auth.signUp({ email, password }); // email+password signup. [4](https://supabase.com/docs/guides/auth/passwords)
+      if (error) { signupMsg.textContent = `Error: ${error.message}`; return; }
+
+      // If email confirmation is ON, session may be null until user clicks verification link.
+      signupMsg.textContent = data.session ? 'Signed up & signed in!' : 'Signed up. Check your email to verify.';
+
+      // Ensure profile row exists
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        await supabase.from('profiles').upsert({ id: user.id, full_name }, { onConflict: 'id' }); // requires RLS policies above
+      }
+    });
+
+    signinForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      signinMsg.textContent = 'Signing in...';
+      const email = document.getElementById('signinEmail').value.trim();
+      const password = document.getElementById('signinPassword').value.trim();
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password }); // v2 method. [2](https://supabase.com/docs/reference/javascript/auth-signinwithpassword)
+      signinMsg.textContent = error ? `Error: ${error.message}` : 'Signed in!';
+    });
+
+    signoutBtn.addEventListener('click', async () => {
+      await supabase.auth.signOut();
+    });
+
+    // React to auth state changes (session stored in localStorage by default). [7](https://supabase.com/docs/reference/javascript/auth-api)
+    supabase.auth.onAuthStateChange((_event, session) => {
+      renderSession(session);
+    });
+
+    async function renderSession(session) {
+      if (session?.user) {
+        userInfo.textContent = `Signed in as ${session.user.email} (id: ${session.user.id})`;
+        signoutBtn.classList.remove('hidden');
+        submitItemForm.classList.remove('hidden');
+        studentArea.classList.remove('hidden');
+
+        // Determine admin (reads profiles via RLS policy).
+        const { data: profile } = await supabase
+          .from('profiles').select('is_admin').eq('id', session.user.id).maybeSingle();
+
+        if (profile?.is_admin) {
+          adminArea.classList.remove('hidden');
+          loadPendingItems();
+          loadPendingClaims();
+        } else {
+          adminArea.classList.add('hidden');
+        }
+
+        // Load main student lists
+        await searchApprovedItems(); // initial list
+        await loadMyClaims();
+      } else {
+        userInfo.textContent = 'Not signed in';
+        signoutBtn.classList.add('hidden');
+        submitItemForm.classList.add('hidden');
+        studentArea.classList.add('hidden');
+        adminArea.classList.add('hidden');
+        itemsList.innerHTML = '';
+        claimsList.innerHTML = '';
+        pendingItemsList.innerHTML = '';
+        pendingClaimsList.innerHTML = '';
+      }
+    }
+
+    /* ===== Student: submit found item ===== */
+    submitItemForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      submitMsg.textContent = 'Submitting...';
+
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { submitMsg.textContent = 'You must be signed in.'; return; }
+
+      const payload = {
+        title: itemTitle.value.trim(),
+        description: itemDesc.value.trim(),
+        place_found: itemPlaceFound.value.trim(),
+        photo_url: itemPhotoUrl.value.trim() || null,
+        found_by: user.id,
+        status: 'submitted'
+      };
+
+      const { data, error } = await supabase.from('items').insert(payload).select(); // insert + return. [9](https://supabase.com/docs/reference/javascript/insert)
+      if (error) { submitMsg.textContent = `Error: ${error.message}`; return; }
+
+      submitMsg.textContent = 'Submitted. Await admin approval.';
+      itemTitle.value = ''; itemDesc.value = ''; itemPlaceFound.value = ''; itemPhotoUrl.value = '';
+      await loadMyClaims(); // no-op, but keeps UX consistent
+    });
+
+    /* ===== Student: search approved items ===== */
+    searchBtn.addEventListener('click', async () => {
+      await searchApprovedItems();
+    });
+
+    async function searchApprovedItems() {
+      itemsMsg.textContent = 'Loading...';
+      const q = searchText.value.trim();
+
+      let query = supabase.from('items')
+        .select('id,title,description,place_found,photo_url,status,created_at')
+        .eq('status', 'approved')
+        .order('created_at', { ascending: false });
+
+      if (q) {
+        // Very simple text filters on title/place_found
+        query = query.ilike('title', `%${q}%`);
+        // NOTE: For multiple filters, chain .or()/.ilike() calls accordingly.
+      }
+
+      const { data, error } = await query;
+      if (error) { itemsMsg.textContent = `Error: ${error.message}`; return; }
+      itemsMsg.textContent = '';
+      itemsList.innerHTML = '';
+      data.forEach(renderApprovedItemRow);
+    }
+
+    function renderApprovedItemRow(item) {
+      const row = document.createElement('div');
+      row.className = 'item-row';
+
+      const left = document.createElement('div');
+      left.innerHTML = `
+        <strong>${item.title}</strong>
+        <div class="muted">${item.place_found || ''}</div>
+        <div class="muted">${item.description || ''}</div>
+        ${item.photo_url ? `<div><img src="${item.photo_url}" alt="photo" style="max-width:160px; border:1px solid #ccc;"/></div>` : ''}
+      `;
+
+      const claimBtn = document.createElement('button');
+      claimBtn.textContent = 'Claim';
+      claimBtn.addEventListener('click', async () => {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) { alert('Sign in first'); return; }
+
+        // Prevent duplicate pending claim for this item
+        const { data: pending } = await supabase.from('claims')
+          .select('id').eq('item_id', item.id).eq('status','pending').limit(1);
+        if (pending && pending.length) { alert('This item already has a pending claim.'); return; }
+
+        const { error } = await supabase.from('claims').insert({
+          item_id: item.id,
+          claimer_id: user.id,
+          status: 'pending'
+        });
+        if (error) { alert('Error: ' + error.message); return; }
+
+        alert('Claim submitted. Admin will review.');
+        await loadMyClaims();
+      });
+
+      const statusPill = document.createElement('span');
+      statusPill.className = 'pill';
+      statusPill.textContent = item.status;
+
+      row.append(left, claimBtn, statusPill);
+      itemsList.appendChild(row);
+    }
+
+    /* ===== Student: view/manage own claims ===== */
+    async function loadMyClaims() {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { claimsMsg.textContent = 'Sign in to view your claims.'; return; }
+      claimsMsg.textContent = 'Loading...';
+
+      const { data, error } = await supabase
+        .from('claims')
+        .select('id,item_id,status,created_at')
+        .eq('claimer_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (error) { claimsMsg.textContent = `Error: ${error.message}`; return; }
+      claimsMsg.textContent = '';
+      claimsList.innerHTML = '';
+
+      for (const c of data) {
+        // Fetch item details (approved listings only visible to students; owner/admin visibility via policies).
+        const { data: item } = await supabase.from('items')
+          .select('title,place_found,status').eq('id', c.item_id).maybeSingle();
+
+        const row = document.createElement('div');
+        row.className = 'claim-row';
+        const left = document.createElement('div');
+        left.innerHTML = `<strong>Item:</strong> ${item?.title || c.item_id} <span class="muted">(${item?.place_found || ''})</span>`;
+        const statusPill = document.createElement('span');
+        statusPill.className = 'pill';
+        statusPill.textContent = c.status;
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.textContent = 'Cancel (if pending)';
+        cancelBtn.disabled = c.status !== 'pending';
+        cancelBtn.addEventListener('click', async () => {
+          const { error } = await supabase.from('claims').delete().eq('id', c.id); // delete (requires SELECT visibility under RLS). [11](https://supabase.com/docs/reference/javascript/delete)
+          if (error) { alert('Error: ' + error.message); return; }
+          await loadMyClaims();
+        });
+
+        row.append(left, cancelBtn, statusPill);
+        claimsList.appendChild(row);
+      }
+    }
+
+    /* ===== Admin: load submissions ===== */
+    async function loadPendingItems() {
+      pendingItemsMsg.textContent = 'Loading submissions...';
+      // Admin visibility: RLS allows admin to select all items.
+      const { data, error } = await supabase
+        .from('items')
+        .select('id,title,description,place_found,photo_url,found_by,status,created_at')
+        .eq('status','submitted')
+        .order('created_at', { ascending: false });
+
+      if (error) { pendingItemsMsg.textContent = `Error: ${error.message}`; return; }
+      pendingItemsMsg.textContent = '';
+      pendingItemsList.innerHTML = '';
+      data.forEach(renderPendingItemRow);
+    }
+
+    function renderPendingItemRow(item) {
+      const row = document.createElement('div');
+      row.className = 'item-row';
+      const left = document.createElement('div');
+      left.innerHTML = `
+        <strong>${item.title}</strong>
+        <div class="muted">${item.place_found || ''}</div>
+        <div class="muted">${item.description || ''}</div>
+        ${item.photo_url ? `<div><img src="${item.photo_url}" alt="photo" style="max-width:160px; border:1px solid #ccc;"/></div>` : ''}
+      `;
+
+      const approveBtn = document.createElement('button');
+      approveBtn.textContent = 'Approve';
+      approveBtn.addEventListener('click', async () => {
+        const { data: { user } } = await supabase.auth.getUser();
+        const { error } = await supabase
+          .from('items')
+          .update({ status: 'approved', approved_by: user.id, approved_at: new Date().toISOString() })
+          .eq('id', item.id)
+          .select(); // return updated row (admin has update permission). [10](https://supabase.com/docs/reference/javascript/update)
+        if (error) { alert('Error: ' + error.message); return; }
+        await loadPendingItems();
+      });
+
+      const denyBtn = document.createElement('button');
+      denyBtn.textContent = 'Deny';
+      denyBtn.addEventListener('click', async () => {
+        const reason = prompt('Reason for denial?') || null;
+        const { error } = await supabase
+          .from('items')
+          .update({ status: 'rejected', rejected_reason: reason })
+          .eq('id', item.id);
+        if (error) { alert('Error: ' + error.message); return; }
+        await loadPendingItems();
+      });
+
+      const statusPill = document.createElement('span');
+      statusPill.className = 'pill';
+      statusPill.textContent = item.status;
+
+      row.append(left, approveBtn, denyBtn);
+      pendingItemsList.appendChild(row);
+    }
+
+    /* ===== Admin: load pending claims ===== */
+    async function loadPendingClaims() {
+      pendingClaimsMsg.textContent = 'Loading claims...';
+      const { data, error } = await supabase
+        .from('claims')
+        .select('id,item_id,claimer_id,status,created_at')
+        .eq('status','pending')
+        .order('created_at', { ascending: false });
+
+      if (error) { pendingClaimsMsg.textContent = `Error: ${error.message}`; return; }
+      pendingClaimsMsg.textContent = '';
+      pendingClaimsList.innerHTML = '';
+
+      for (const c of data) {
+        // Fetch item and claimer info (admin policies allow visibility).
+        const { data: item } = await supabase.from('items')
+          .select('title,place_found,status').eq('id', c.item_id).maybeSingle();
+        const { data: claimer } = await supabase.from('profiles')
+          .select('full_name').eq('id', c.claimer_id).maybeSingle();
+
+        const row = document.createElement('div');
+        row.className = 'claim-row';
+
+        const left = document.createElement('div');
+        left.innerHTML = `
+          <strong>Item:</strong> ${item?.title || c.item_id} <span class="muted">(${item?.place_found || ''})</span>
+          <div class="muted">Claimer: ${claimer?.full_name || c.claimer_id}</div>
+        `;
+
+        const approveBtn = document.createElement('button');
+        approveBtn.textContent = 'Approve claim';
+        approveBtn.addEventListener('click', async () => {
+          const { data: { user } } = await supabase.auth.getUser();
+          // 1) Set claim to approved
+          const { error: e1 } = await supabase
+            .from('claims')
+            .update({ status: 'approved', admin_id: user.id, decided_at: new Date().toISOString() })
+            .eq('id', c.id);
+          if (e1) { alert('Error: ' + e1.message); return; }
+          // 2) Mark item as returned to the claimer
+          const { error: e2 } = await supabase
+            .from('items')
+            .update({ status: 'returned', returned_to: c.claimer_id, returned_at: new Date().toISOString() })
+            .eq('id', c.item_id);
+          if (e2) { alert('Error: ' + e2.message); return; }
+          // After returned, it disappears from student list (we list only 'approved').
+          await loadPendingClaims();
+          await searchApprovedItems();
+        });
+
+        const denyBtn = document.createElement('button');
+        denyBtn.textContent = 'Deny claim';
+        denyBtn.addEventListener('click', async () => {
+          const reason = prompt('Optional note for denial') || null;
+          const { data: { user } } = await supabase.auth.getUser();
+          const { error } = await supabase
+            .from('claims')
+            .update({ status: 'denied', admin_id: user.id, decided_at: new Date().toISOString(), note: reason })
+            .eq('id', c.id);
+          if (error) { alert('Error: ' + error.message); return; }
+          await loadPendingClaims();
+        });
+
+        const statusPill = document.createElement('span');
+        statusPill.className = 'pill';
+        statusPill.textContent = c.status;
+
+        row.append(left, approveBtn, denyBtn);
+        pendingClaimsList.appendChild(row);
+      }
+    }
+
+    // Initialize on first load
+    (async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      renderSession(session);
+    })();
+  </script>
+</body>
+</html>
